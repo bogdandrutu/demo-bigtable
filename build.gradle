@@ -61,8 +61,8 @@ sourceSets {
 startScripts.enabled = false
 
 task bigtableContinuousRequestsApp(type: CreateStartScripts) {
-    mainClassName = 'io.opencensus.examples.bigtable.ContinuousRequestsApp'
-    applicationName = 'bigtable-continuous-requests-app'
+    mainClassName = 'io.opencensus.examples.bigtable.DemoApp'
+    applicationName = 'bigtable-demo-app'
     outputDir = new File(project.buildDir, 'tmp')
     classpath = jar.outputs.files + project.configurations.runtime
 }
