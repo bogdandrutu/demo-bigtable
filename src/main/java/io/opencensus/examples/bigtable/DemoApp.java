@@ -20,17 +20,25 @@ import static com.google.common.base.Preconditions.checkState;
 
 import com.google.cloud.bigtable.hbase.BigtableConfiguration;
 import com.google.cloud.bigtable.util.TracingUtilities;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.Uninterruptibles;
+import io.opencensus.common.Duration;
 import io.opencensus.common.Scope;
+import io.opencensus.contrib.grpc.metrics.RpcViewConstants;
 import io.opencensus.contrib.zpages.ZPageHandlers;
+import io.opencensus.exporter.stats.stackdriver.StackdriverStatsExporter;
 import io.opencensus.exporter.trace.stackdriver.StackdriverExporter;
-import io.opencensus.trace.EndSpanOptions;
+import io.opencensus.stats.Stats;
+import io.opencensus.stats.View;
+import io.opencensus.trace.AttributeValue;
 import io.opencensus.trace.Status;
 import io.opencensus.trace.Tracer;
 import io.opencensus.trace.Tracing;
 import io.opencensus.trace.samplers.Samplers;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
@@ -57,6 +65,40 @@ public class DemoApp {
   private static final String VALUE_PREFIX = "demo_value_";
   private static final String ROW_KEY_PREFIX = "demo_row_";
 
+  private static final Set<View> RPC_VIEW_SET =
+      ImmutableSet.of(
+          RpcViewConstants.RPC_CLIENT_ERROR_COUNT_HOUR_VIEW,
+          RpcViewConstants.RPC_CLIENT_ERROR_COUNT_MINUTE_VIEW,
+          RpcViewConstants.RPC_CLIENT_ERROR_COUNT_VIEW,
+          RpcViewConstants.RPC_CLIENT_REQUEST_COUNT_HOUR_VIEW,
+          RpcViewConstants.RPC_CLIENT_REQUEST_COUNT_MINUTE_VIEW,
+          RpcViewConstants.RPC_CLIENT_REQUEST_COUNT_VIEW,
+          RpcViewConstants.RPC_CLIENT_RESPONSE_COUNT_HOUR_VIEW,
+          RpcViewConstants.RPC_CLIENT_RESPONSE_COUNT_MINUTE_VIEW,
+          RpcViewConstants.RPC_CLIENT_RESPONSE_COUNT_VIEW,
+          RpcViewConstants.RPC_CLIENT_ROUNDTRIP_LATENCY_HOUR_VIEW,
+          RpcViewConstants.RPC_CLIENT_ROUNDTRIP_LATENCY_MINUTE_VIEW,
+          RpcViewConstants.RPC_CLIENT_ROUNDTRIP_LATENCY_VIEW,
+          RpcViewConstants.RPC_CLIENT_STARTED_COUNT_HOUR_VIEW,
+          RpcViewConstants.RPC_CLIENT_STARTED_COUNT_MINUTE_VIEW,
+          RpcViewConstants.RPC_CLIENT_FINISHED_COUNT_HOUR_VIEW,
+          RpcViewConstants.RPC_CLIENT_FINISHED_COUNT_MINUTE_VIEW,
+          RpcViewConstants.RPC_CLIENT_REQUEST_BYTES_HOUR_VIEW,
+          RpcViewConstants.RPC_CLIENT_REQUEST_BYTES_MINUTE_VIEW,
+          RpcViewConstants.RPC_CLIENT_REQUEST_BYTES_VIEW,
+          RpcViewConstants.RPC_CLIENT_RESPONSE_BYTES_HOUR_VIEW,
+          RpcViewConstants.RPC_CLIENT_RESPONSE_BYTES_MINUTE_VIEW,
+          RpcViewConstants.RPC_CLIENT_RESPONSE_BYTES_VIEW,
+          RpcViewConstants.RPC_CLIENT_UNCOMPRESSED_REQUEST_BYTES_HOUR_VIEW,
+          RpcViewConstants.RPC_CLIENT_UNCOMPRESSED_REQUEST_BYTES_MINUTE_VIEW,
+          RpcViewConstants.RPC_CLIENT_UNCOMPRESSED_REQUEST_BYTES_VIEW,
+          RpcViewConstants.RPC_CLIENT_UNCOMPRESSED_RESPONSE_BYTES_HOUR_VIEW,
+          RpcViewConstants.RPC_CLIENT_UNCOMPRESSED_RESPONSE_BYTES_MINUTE_VIEW,
+          RpcViewConstants.RPC_CLIENT_UNCOMPRESSED_RESPONSE_BYTES_VIEW,
+          RpcViewConstants.RPC_CLIENT_SERVER_ELAPSED_TIME_HOUR_VIEW,
+          RpcViewConstants.RPC_CLIENT_SERVER_ELAPSED_TIME_MINUTE_VIEW,
+          RpcViewConstants.RPC_CLIENT_SERVER_ELAPSED_TIME_VIEW);
+
   // Creates a table with a single column family
   private static void createTable(Admin admin, byte[] tableName, byte[] familyName) {
     try (Scope scope =
@@ -69,13 +111,7 @@ public class DemoApp {
       try {
         admin.createTable(descriptor);
       } catch (IOException e) {
-        // TODO(bdrutu): Change this to setStatus when move to opencensus 0.9.0.
-        tracer
-            .getCurrentSpan()
-            .end(
-                EndSpanOptions.builder()
-                    .setStatus(Status.UNKNOWN.withDescription(e.getMessage()))
-                    .build());
+        tracer.getCurrentSpan().setStatus(Status.UNKNOWN.withDescription(e.getMessage()));
       }
     }
   }
@@ -91,13 +127,7 @@ public class DemoApp {
         admin.disableTable(TableName.valueOf(tableName));
         admin.deleteTable(TableName.valueOf(tableName));
       } catch (IOException e) {
-        // TODO(bdrutu): Change this to setStatus when move to opencensus 0.9.0.
-        tracer
-            .getCurrentSpan()
-            .end(
-                EndSpanOptions.builder()
-                    .setStatus(Status.UNKNOWN.withDescription(e.getMessage()))
-                    .build());
+        tracer.getCurrentSpan().setStatus(Status.UNKNOWN.withDescription(e.getMessage()));
       }
     }
   }
@@ -111,13 +141,7 @@ public class DemoApp {
         put.addColumn(COLUMN_FAMILY_NAME, COLUMN_NAME, value);
         table.put(put);
       } catch (IOException e) {
-        // TODO(bdrutu): Change this to setStatus when move to opencensus 0.9.0.
-        tracer
-            .getCurrentSpan()
-            .end(
-                EndSpanOptions.builder()
-                    .setStatus(Status.UNKNOWN.withDescription(e.getMessage()))
-                    .build());
+        tracer.getCurrentSpan().setStatus(Status.UNKNOWN.withDescription(e.getMessage()));
       }
     }
   }
@@ -130,27 +154,17 @@ public class DemoApp {
         Result getResult = table.get(new Get(rowKey));
         byte[] actualValue = getResult.getValue(COLUMN_FAMILY_NAME, COLUMN_NAME);
         if (!Arrays.equals(expectedValue, actualValue)) {
-          // TODO(bdrutu): Change this to setStatus when move to opencensus 0.9.0.
           tracer
               .getCurrentSpan()
-              .end(
-                  EndSpanOptions.builder()
-                      .setStatus(
-                          Status.UNKNOWN.withDescription(
-                              "Expected value: "
-                                  + Bytes.toString(expectedValue)
-                                  + " got value: "
-                                  + Bytes.toString(actualValue)))
-                      .build());
+              .setStatus(
+                  Status.UNKNOWN.withDescription(
+                      "Expected value: "
+                          + Bytes.toString(expectedValue)
+                          + " got value: "
+                          + Bytes.toString(actualValue)));
         }
       } catch (IOException e) {
-        // TODO(bdrutu): Change this to setStatus when move to opencensus 0.9.0.
-        tracer
-            .getCurrentSpan()
-            .end(
-                EndSpanOptions.builder()
-                    .setStatus(Status.UNKNOWN.withDescription(e.getMessage()))
-                    .build());
+        tracer.getCurrentSpan().setStatus(Status.UNKNOWN.withDescription(e.getMessage()));
       }
     }
   }
@@ -172,20 +186,18 @@ public class DemoApp {
       int valueIntex = 0;
       while (!Thread.interrupted()) {
         byte[] rowKey = Bytes.toBytes(ROW_KEY_PREFIX + rowIndex++);
+        if (rowIndex == 17) {
+          rowIndex = 0;
+        }
         byte[] value = Bytes.toBytes(VALUE_PREFIX + valueIntex++);
+        if (valueIntex == 27) {
+          valueIntex = 0;
+        }
         put(table, rowKey, value);
         Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
         get(table, rowKey, value);
         Uninterruptibles.sleepUninterruptibly(500, TimeUnit.MILLISECONDS);
-        if (rowIndex == 17) {
-          rowIndex = 0;
-        }
-        if (valueIntex == 27) {
-          valueIntex = 0;
-        }
       }
-
-      cleanUpAndDeleteTable(admin, TABLE_NAME);
     } catch (IOException e) {
       System.err.println("Exception while running HelloWorld: " + e.getMessage());
       e.printStackTrace();
@@ -195,8 +207,10 @@ public class DemoApp {
     System.exit(0);
   }
 
-  private static void print(String msg) {
-    System.out.println("HelloWorld: " + msg);
+  private static void registerViews() {
+    for (View view : RPC_VIEW_SET) {
+      Stats.getViewManager().registerView(view);
+    }
   }
 
   public static void main(String[] args) throws IOException, InterruptedException {
@@ -206,12 +220,25 @@ public class DemoApp {
     int portNumber = Integer.getInteger(requiredProperty("bigtable.portNumber"));
 
     TracingUtilities.setupTracingConfig();
+    // Still need to register span names for gRPC spans until the stubs are re-generated using
+    // gRPC 1.8.
     Tracing.getExportComponent()
         .getSampledSpanStore()
         .registerSpanNamesForCollection(
-            Arrays.asList("DemoCreateTable", "DemoCleanUpAndDeleteTable", "DemoGet", "DemoPut"));
+            Arrays.asList(
+                "DemoCreateTable",
+                "DemoCleanUpAndDeleteTable",
+                "DemoGet",
+                "DemoPut",
+                "Sent.google.devtools.cloudtrace.v2.TraceService.BatchWriteSpans",
+                "Sent.google.monitoring.v3.MetricService.CreateMetricDescriptor",
+                "Sent.google.monitoring.v3.MetricService.CreateTimeSeries"));
+
+    // This needs to be done for the moment by all users.
+    registerViews();
 
     StackdriverExporter.createAndRegisterWithProjectId(projectId);
+    StackdriverStatsExporter.createAndRegisterWithProjectId(projectId, Duration.create(5, 0));
     ZPageHandlers.startHttpServerAndRegisterAll(portNumber);
 
     doHelloWorld(projectId, instanceId);

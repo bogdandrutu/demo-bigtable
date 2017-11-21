@@ -4,48 +4,33 @@ apply plugin: 'idea'
 // Provide convenience executables for trying out the examples.
 apply plugin: 'application'
 
-buildscript {
-    repositories {
-        mavenCentral()
-        mavenLocal()
-        maven {
-            url "https://plugins.gradle.org/m2/"
-        }
-    }
-
-    dependencies {
-        // ASSUMES GRADLE 2.12 OR HIGHER. Use plugin version 0.7.5 with earlier
-        // gradle versions
-    }
-}
-
 repositories {
     mavenCentral()
     mavenLocal()
 }
 
-// IMPORTANT: You probably want the non-SNAPSHOT version of gRPC. Make sure you
-// are looking at a tagged version of the example and not "master"!
-
-def grpcVersion = '1.7.0'
+def grpcVersion = '1.8.0'
 def guavaVersion = '19.0'
 def bigtableVersion = '1.0.0-pre4'
-def opencensusVersion = '0.8.0'
+def opencensusVersion = '0.10.0-SNAPSHOT'
 
 dependencies {
-    compile "com.google.cloud.bigtable:bigtable-hbase-1.x:${bigtableVersion}"
+    compile ("com.google.cloud.bigtable:bigtable-hbase-1.x:${bigtableVersion}") {
+        // we'll always be more up-to-date
+        exclude group: 'io.grpc', module: 'grpc-context'
+        exclude group: 'io.grpc', module: 'grpc-core'
+    }
     compile "com.google.guava:guava:${guavaVersion}"
+    compile "io.grpc:grpc-core:${grpcVersion}"
     compile "io.grpc:grpc-netty:${grpcVersion}"
     compile "io.grpc:grpc-protobuf:${grpcVersion}"
     compile "io.grpc:grpc-stub:${grpcVersion}"
     compile "io.opencensus:opencensus-api:${opencensusVersion}"
-    compile "io.opencensus:opencensus-impl:${opencensusVersion}"
     compile "io.opencensus:opencensus-contrib-zpages:${opencensusVersion}"
     compile "io.opencensus:opencensus-exporter-trace-stackdriver:${opencensusVersion}"
+    compile "io.opencensus:opencensus-exporter-stats-stackdriver:${opencensusVersion}"
 
-    testCompile "io.grpc:grpc-testing:${grpcVersion}"
-    testCompile "junit:junit:4.12"
-    testCompile "org.mockito:mockito-core:1.9.5"
+    runtime "io.opencensus:opencensus-impl:${opencensusVersion}"
 }
 
 // Inform IDEs like IntelliJ IDEA, Eclipse or NetBeans about the generated code.
