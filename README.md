@@ -1,1 +1,1 @@
-# Demo Bigtable App
+# Demo Java Apps
