@@ -17,6 +17,8 @@
 package io.opencensus.examples.bigtable;
 
 import static com.google.common.base.Preconditions.checkState;
+import static io.opencensus.contrib.grpc.metrics.RpcMeasureConstants.RPC_CLIENT_ROUNDTRIP_LATENCY;
+import static io.opencensus.contrib.grpc.metrics.RpcMeasureConstants.RPC_METHOD;
 
 import com.google.cloud.bigtable.hbase.BigtableConfiguration;
 import com.google.cloud.bigtable.util.TracingUtilities;
@@ -27,10 +29,16 @@ import io.opencensus.common.Scope;
 import io.opencensus.contrib.grpc.metrics.RpcViewConstants;
 import io.opencensus.contrib.zpages.ZPageHandlers;
 import io.opencensus.exporter.stats.stackdriver.StackdriverStatsExporter;
-import io.opencensus.exporter.trace.stackdriver.StackdriverExporter;
+import io.opencensus.stats.Aggregation.Distribution;
+import io.opencensus.stats.BucketBoundaries;
 import io.opencensus.stats.Stats;
 import io.opencensus.stats.View;
-import io.opencensus.trace.AttributeValue;
+import io.opencensus.stats.View.AggregationWindow.Cumulative;
+import io.opencensus.tags.TagKey;
+import io.opencensus.tags.TagValue;
+import io.opencensus.tags.Tagger;
+import io.opencensus.tags.Tags;
+import io.opencensus.trace.Sampler;
 import io.opencensus.trace.Status;
 import io.opencensus.trace.Tracer;
 import io.opencensus.trace.Tracing;
@@ -38,6 +46,7 @@ import io.opencensus.trace.samplers.Samplers;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.apache.hadoop.hbase.HColumnDescriptor;
@@ -57,6 +66,24 @@ import org.apache.hadoop.hbase.util.Bytes;
  */
 public class DemoApp {
   private static final Tracer tracer = Tracing.getTracer();
+  private static final Tagger tagger = Tags.getTagger();
+  private static final TagKey SPECIAL_KEY = TagKey.create("MySpecialDimension");
+
+  // Common histogram bucket boundaries for latency and elapsed-time Views.
+  static final List<Double> RPC_MILLIS_BUCKET_BOUNDARIES = Collections.unmodifiableList(
+      Arrays.asList(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 13.0, 16.0, 20.0, 25.0, 30.0,
+          40.0, 50.0, 65.0, 80.0, 100.0, 130.0, 160.0, 200.0, 250.0, 300.0, 400.0, 500.0, 650.0,
+          800.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0, 50000.0, 100000.0));
+
+  // RPC client interval views.
+  public static final View RPC_CLIENT_WITH_SPECIAL =
+      View.create(
+          View.Name.create("demo.io/client/roundtrip_latency_special/cumulative"),
+          "Minute stats for latency in msecs",
+          RPC_CLIENT_ROUNDTRIP_LATENCY,
+          Distribution.create(BucketBoundaries.create(RPC_MILLIS_BUCKET_BOUNDARIES)),
+          Arrays.asList(RPC_METHOD, SPECIAL_KEY),
+          Cumulative.create());
 
   // Refer to table metadata names by byte array in the HBase API
   private static final byte[] TABLE_NAME = Bytes.toBytes("BigtableDemoApp");
@@ -64,6 +91,7 @@ public class DemoApp {
   private static final byte[] COLUMN_NAME = Bytes.toBytes("demo_column_name");
   private static final String VALUE_PREFIX = "demo_value_";
   private static final String ROW_KEY_PREFIX = "demo_row_";
+  private static final Sampler SAMPLER = Samplers.probabilitySampler(0.1);
 
   private static final Set<View> RPC_VIEW_SET =
       ImmutableSet.of(
@@ -102,10 +130,7 @@ public class DemoApp {
   // Creates a table with a single column family
   private static void createTable(Admin admin, byte[] tableName, byte[] familyName) {
     try (Scope scope =
-        tracer
-            .spanBuilder("DemoCreateTable")
-            .setSampler(Samplers.alwaysSample())
-            .startScopedSpan()) {
+        tracer.spanBuilder("DemoCreateTable").setSampler(SAMPLER).startScopedSpan()) {
       HTableDescriptor descriptor = new HTableDescriptor(TableName.valueOf(tableName));
       descriptor.addFamily(new HColumnDescriptor(familyName));
       try {
@@ -119,10 +144,7 @@ public class DemoApp {
   // Cleans up by disabling and then deleting the table
   private static void cleanUpAndDeleteTable(Admin admin, byte[] tableName) {
     try (Scope scope =
-        tracer
-            .spanBuilder("DemoCleanUpAndDeleteTable")
-            .setSampler(Samplers.alwaysSample())
-            .startScopedSpan()) {
+        tracer.spanBuilder("DemoCleanUpAndDeleteTable").setSampler(SAMPLER).startScopedSpan()) {
       try {
         admin.disableTable(TableName.valueOf(tableName));
         admin.deleteTable(TableName.valueOf(tableName));
@@ -133,22 +155,31 @@ public class DemoApp {
   }
 
   private static void put(Table table, byte[] rowKey, byte[] value) {
-    try (Scope scope =
-        tracer.spanBuilder("DemoPut").setSampler(Samplers.alwaysSample()).startScopedSpan()) {
-      try {
-        // Put a single row into the table. We could also pass a list of Puts to write a batch.
-        Put put = new Put(rowKey);
-        put.addColumn(COLUMN_FAMILY_NAME, COLUMN_NAME, value);
-        table.put(put);
-      } catch (IOException e) {
-        tracer.getCurrentSpan().setStatus(Status.UNKNOWN.withDescription(e.getMessage()));
+    try (Scope scope_tag =
+        tagger
+            .currentBuilder()
+            .put(
+                SPECIAL_KEY,
+                (value[0] & (byte) 1) == (byte) 1
+                    ? TagValue.create("Even")
+                    : TagValue.create("Odd"))
+            .buildScoped()) {
+      try (Scope scope_span = tracer.spanBuilder("DemoPut").setSampler(SAMPLER).startScopedSpan()) {
+        try {
+          // Put a single row into the table. We could also pass a list of Puts to write a batch.
+          Put put = new Put(rowKey);
+          put.addColumn(COLUMN_FAMILY_NAME, COLUMN_NAME, value);
+          table.put(put);
+        } catch (IOException e) {
+          tracer.getCurrentSpan().setStatus(Status.UNKNOWN.withDescription(e.getMessage()));
+        }
       }
     }
   }
 
   private static void get(Table table, byte[] rowKey, byte[] expectedValue) {
-    try (Scope scope =
-        tracer.spanBuilder("DemoGet").setSampler(Samplers.alwaysSample()).startScopedSpan()) {
+
+    try (Scope scope = tracer.spanBuilder("DemoGet").setSampler(SAMPLER).startScopedSpan()) {
       try {
         // Put a single row into the table. We could also pass a list of Puts to write a batch.
         Result getResult = table.get(new Get(rowKey));
@@ -215,9 +246,9 @@ public class DemoApp {
 
   public static void main(String[] args) throws IOException, InterruptedException {
     // Consult system properties to get project/instance
-    String projectId = requiredProperty("bigtable.projectID");
-    String instanceId = requiredProperty("bigtable.instanceID");
-    int portNumber = Integer.getInteger(requiredProperty("bigtable.portNumber"));
+    String projectId = "e2e-debugging"; // requiredProperty("bigtable.projectID");
+    String instanceId = "e2e-debugging"; // requiredProperty("bigtable.instanceID");
+    int portNumber = 8080; // Integer.getInteger(requiredProperty("bigtable.portNumber"));
 
     TracingUtilities.setupTracingConfig();
     // Still need to register span names for gRPC spans until the stubs are re-generated using
@@ -235,9 +266,11 @@ public class DemoApp {
                 "Sent.google.monitoring.v3.MetricService.CreateTimeSeries"));
 
     // This needs to be done for the moment by all users.
-    registerViews();
+    // registerViews();
 
-    StackdriverExporter.createAndRegisterWithProjectId(projectId);
+    Stats.getViewManager().registerView(RPC_CLIENT_WITH_SPECIAL);
+
+    // StackdriverExporter.createAndRegisterWithProjectId(projectId);
     StackdriverStatsExporter.createAndRegisterWithProjectId(projectId, Duration.create(5, 0));
     ZPageHandlers.startHttpServerAndRegisterAll(portNumber);
 
