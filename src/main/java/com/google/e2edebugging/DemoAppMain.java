@@ -1,19 +1,35 @@
+/*
+ * Copyright 2017, OpenCensus Authors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package com.google.e2edebugging;
 
 import static com.google.common.base.Preconditions.checkState;
 
 import com.google.cloud.bigtable.hbase.BigtableConfiguration;
+import com.google.cloud.bigtable.metrics.BigtableClientMetrics;
+import com.google.cloud.bigtable.metrics.DropwizardMetricRegistry;
 import com.google.common.util.concurrent.Uninterruptibles;
 import com.google.e2edebugging.bigtable.BigtableOperations;
+import io.opencensus.common.Duration;
 import io.opencensus.contrib.grpc.metrics.RpcViews;
-import io.opencensus.contrib.zpages.ZPageHandlers;
 import io.opencensus.exporter.stats.stackdriver.StackdriverStatsConfiguration;
 import io.opencensus.exporter.stats.stackdriver.StackdriverStatsExporter;
 import io.opencensus.exporter.trace.stackdriver.StackdriverTraceConfiguration;
 import io.opencensus.exporter.trace.stackdriver.StackdriverTraceExporter;
-import io.opencensus.trace.Tracing;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -62,24 +78,17 @@ public class DemoAppMain {
     // Consult system properties to get project/instance
     String projectId = requiredProperty("bigtable.projectID");
     String instanceId = requiredProperty("bigtable.instanceID");
-    int portNumber = Integer.getInteger(requiredProperty("zpages.portNumber"));
-
-    // Still need to register span names for gRPC spans until the stubs are re-generated using
-    // gRPC 1.8.
-    Tracing.getExportComponent()
-        .getSampledSpanStore()
-        .registerSpanNamesForCollection(
-            Arrays.asList(
-                "Sent.google.devtools.cloudtrace.v2.TraceService.BatchWriteSpans",
-                "Sent.google.monitoring.v3.MetricService.CreateMetricDescriptor",
-                "Sent.google.monitoring.v3.MetricService.CreateTimeSeries"));
 
     // This needs to be done for the moment by all users.
     RpcViews.registerAllViews();
 
-    StackdriverTraceExporter.createAndRegister(StackdriverTraceConfiguration.builder().build());
-    StackdriverStatsExporter.createAndRegister(StackdriverStatsConfiguration.builder().build());
-    ZPageHandlers.startHttpServerAndRegisterAll(portNumber);
+    StackdriverTraceExporter.createAndRegister(
+        StackdriverTraceConfiguration.builder().setProjectId(projectId).build());
+
+    DropwizardMetricRegistry registry = new DropwizardMetricRegistry();
+    BigtableClientMetrics.setMetricRegistry(registry);
+    StackdriverStatsExporter.createAndRegister(
+        StackdriverStatsConfiguration.builder().setExportInterval(Duration.create(5, 0)).build());
 
     doBigtableOperations(projectId, instanceId);
   }
