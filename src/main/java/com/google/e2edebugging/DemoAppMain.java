@@ -88,7 +88,7 @@ public class DemoAppMain {
     DropwizardMetricRegistry registry = new DropwizardMetricRegistry();
     BigtableClientMetrics.setMetricRegistry(registry);
     StackdriverStatsExporter.createAndRegister(
-        StackdriverStatsConfiguration.builder().setExportInterval(Duration.create(5, 0)).build());
+        StackdriverStatsConfiguration.builder().setExportInterval(Duration.create(30, 0)).build());
 
     doBigtableOperations(projectId, instanceId);
   }

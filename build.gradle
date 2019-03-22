@@ -12,10 +12,10 @@ repositories {
     jcenter()
 }
 
-def grpcVersion = '1.10.0'
-def guavaVersion = '19.0'
-def bigtableVersion = '1.3.0'
-def opencensusVersion = '0.13.2'
+def grpcVersion = '1.19.0'
+def guavaVersion = '26.0-anroid'
+def bigtableVersion = '1.10.0'
+def opencensusVersion = '0.19.2'
 
 dependencies {
     compile ("com.google.cloud.bigtable:bigtable-hbase-1.x:${bigtableVersion}") {
@@ -25,7 +25,7 @@ dependencies {
     }
     compile "com.google.guava:guava:${guavaVersion}"
     compile "io.grpc:grpc-core:${grpcVersion}"
-    compile "io.grpc:grpc-netty:${grpcVersion}"
+    compile "io.grpc:grpc-netty-shaded:${grpcVersion}"
     compile "io.grpc:grpc-protobuf:${grpcVersion}"
     compile "io.grpc:grpc-stub:${grpcVersion}"
     compile "io.opencensus:opencensus-api:${opencensusVersion}"
